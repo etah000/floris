@@ -40,6 +40,31 @@ condition $w$.
 Layout optimizers take iterative approaches to solving the layout optimization problem
 specified above. Optimization routines available in FLORIS are described below.
 
+### Boundary formats
+
+All layout optimizers accept the legacy boundary formats (a list of ``(x, y)``
+vertices or a list of vertex lists) and also accept a homogeneous list of
+Shapely ``Polygon`` objects. Polygon interiors, including hole interiors, are
+excluded from placement, and overlapping polygons are treated as one region;
+disjoint polygons remain separate regions. For example:
+
+```python
+from shapely.geometry import Polygon
+
+site_polygon = Polygon(
+    shell=[(0, 0), (0, 1000), (1000, 1000), (1000, 0)],
+    holes=[[(400, 400), (400, 600), (600, 600), (600, 400)]],
+)
+layout_optimizer = LayoutOptimizationGridded(
+    fmodel=fmodel,
+    boundaries=[site_polygon],
+    min_dist=100,
+)
+```
+
+Polygon inputs must be valid. Mixed Polygon and coordinate inputs, empty lists,
+and invalid polygons are rejected rather than repaired implicitly.
+
 ## Scipy layout optimization
 The `LayoutOptimizationScipy` class is built around `scipy.optimize`s `minimize`
 routine, using the `SLSQP` solver by default. Options for adjusting

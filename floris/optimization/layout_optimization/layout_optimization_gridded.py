@@ -19,7 +19,7 @@ class LayoutOptimizationGridded(LayoutOptimization):
     def __init__(
         self,
         fmodel: FlorisModel,
-        boundaries: list[tuple[float, float] | list[tuple[float, float]]],
+        boundaries: list,
         min_dist: float | None = None,
         min_dist_D: float | None = -1,
         rotation_step: float = 5.0,
@@ -34,8 +34,10 @@ class LayoutOptimizationGridded(LayoutOptimization):
 
         Args:
             fmodel: FlorisModel, mostly used to obtain rotor diameter for spacing
-            boundaries: List of boundary vertices. Specified as a list of two-tuples (x,y),
-                or a list of lists of two-tuples if there are multiple separate boundary areas.
+            boundaries: A list of ``(x, y)`` tuples, a list of lists of tuples
+                for separate regions, or a homogeneous list of Shapely Polygon
+                objects. Polygon holes are excluded and overlapping polygons
+                are unioned.
             min_dist: Minimum distance between turbines in meters. Defaults to None, which results
                 in 5D spacing if min_dist_D is not defined.
             min_dist_D: Minimum distance between turbines in terms of rotor diameters. If specified

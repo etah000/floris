@@ -2,6 +2,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from shapely.geometry import MultiPolygon, Polygon
+from shapely.ops import unary_union
 
 from floris import TimeSeries
 from floris.optimization.yaw_optimization.yaw_optimizer_geometric import (
@@ -19,8 +20,11 @@ class LayoutOptimization(LoggingManager):
 
     Args:
         fmodel (FlorisModel): A FlorisModel object.
-        boundaries (iterable(float, float)): Pairs of x- and y-coordinates
-            that represent the boundary's vertices (m).
+        boundaries (list): Boundary specification. This may be a list of
+            ``(x, y)`` tuples, a list of lists of tuples for separate regions,
+            or a homogeneous list of Shapely ``Polygon`` objects. Polygon
+            holes are excluded from placement and overlapping polygons are
+            unioned.
         min_dist (float, optional): The minimum distance to be maintained
             between turbines during the optimization (m). If not specified,
             initializes to 2 rotor diameters. Defaults to None.
@@ -45,26 +49,8 @@ class LayoutOptimization(LoggingManager):
         self.enable_geometric_yaw = enable_geometric_yaw
         self.use_value = use_value
 
-        # Allow boundaries to be set either as a list of corners or as a
-        # nested list of corners (for seperable regions)
-        self.boundaries = boundaries
-        b_depth = list_depth(boundaries)
-
-        boundary_specification_error_msg = (
-            "boundaries should be a list of coordinates (specified as (x,y) "+\
-            "tuples) or as a list of list of tuples (for separable regions)."
-        )
-
-        if b_depth == 1:
-            self._boundary_polygon = MultiPolygon([Polygon(self.boundaries)])
-            self._boundary_line = self._boundary_polygon.boundary
-        elif b_depth == 2:
-            if not isinstance(self.boundaries[0][0], tuple):
-                raise TypeError(boundary_specification_error_msg)
-            self._boundary_polygon = MultiPolygon([Polygon(p) for p in self.boundaries])
-            self._boundary_line = self._boundary_polygon.boundary
-        else:
-            raise TypeError(boundary_specification_error_msg)
+        self._boundary_polygon = self._normalize_boundaries(boundaries)
+        self._boundary_line = self._boundary_polygon.boundary
 
         self.xmin, self.ymin, self.xmax, self.ymax = self._boundary_polygon.bounds
 
@@ -111,6 +97,50 @@ class LayoutOptimization(LoggingManager):
 
     def _unnorm(self, val, x1, x2):
         return np.array(val) * (x2 - x1) + x1
+
+    @staticmethod
+    def _normalize_boundaries(boundaries):
+        """Validate and union the supported boundary specifications."""
+        boundary_specification_error_msg = (
+            "boundaries should be a non-empty list of coordinate tuples, a list "
+            "of lists of coordinate tuples, or a homogeneous list of Polygon objects."
+        )
+        if not isinstance(boundaries, list):
+            raise TypeError(boundary_specification_error_msg)
+        if not boundaries:
+            raise ValueError("boundaries must not be empty.")
+
+        if any(isinstance(boundary, Polygon) for boundary in boundaries):
+            if not all(isinstance(boundary, Polygon) for boundary in boundaries):
+                raise TypeError(boundary_specification_error_msg)
+            polygons = boundaries
+            legacy_coordinate_input = False
+        elif all(
+            isinstance(point, tuple) and len(point) == 2
+            for point in boundaries
+        ):
+            polygons = [Polygon(boundaries)]
+            legacy_coordinate_input = True
+        elif all(
+            isinstance(region, list)
+            and region
+            and all(isinstance(point, tuple) and len(point) == 2 for point in region)
+            for region in boundaries
+        ):
+            polygons = [Polygon(region) for region in boundaries]
+            legacy_coordinate_input = True
+        else:
+            raise TypeError(boundary_specification_error_msg)
+
+        if any(not polygon.is_valid for polygon in polygons):
+            raise ValueError("boundaries contain an invalid Polygon.")
+
+        normalized = unary_union(polygons)
+        if normalized.is_empty or not isinstance(normalized, (Polygon, MultiPolygon)):
+            raise ValueError("boundaries must produce a non-empty Polygon or MultiPolygon.")
+        if legacy_coordinate_input and isinstance(normalized, Polygon):
+            normalized = MultiPolygon([normalized])
+        return normalized
 
     def _get_geoyaw_angles(self):
         # NOTE: requires that child class saves x and y locations
@@ -209,9 +239,15 @@ class LayoutOptimization(LoggingManager):
 
         plot_boundary_dict = {**default_plot_boundary_dict, **plot_boundary_dict}
 
-        for line in self._boundary_line.geoms:
-            xy = np.array(line.coords)
-            ax.fill(xy[:,0], xy[:,1], **plot_boundary_dict)
+        polygons = (
+            self._boundary_polygon.geoms
+            if isinstance(self._boundary_polygon, MultiPolygon)
+            else (self._boundary_polygon,)
+        )
+        for polygon in polygons:
+            for ring in (polygon.exterior, *polygon.interiors):
+                xy = np.array(ring.coords)
+                ax.fill(xy[:, 0], xy[:, 1], **plot_boundary_dict)
         ax.grid(True)
 
         return ax

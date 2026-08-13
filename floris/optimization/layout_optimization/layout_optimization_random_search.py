@@ -129,8 +129,10 @@ class LayoutOptimizationRandomSearch(LayoutOptimization):
 
         Args:
             fmodel (_type_): _description_
-            boundaries (iterable(float, float)): Pairs of x- and y-coordinates
-                that represent the boundary's vertices (m).
+            boundaries (list): A list of ``(x, y)`` tuples, a list of lists of
+                tuples for separate regions, or a homogeneous list of Shapely
+                Polygon objects. Polygon holes are excluded and overlapping
+                polygons are unioned.
             min_dist (float, optional): The minimum distance to be maintained
                 between turbines during the optimization (m). If not specified,
                 initializes to 2 rotor diameters. Defaults to None.
@@ -180,12 +182,12 @@ class LayoutOptimizationRandomSearch(LayoutOptimization):
             if max_workers is None:
                 max_workers = mp.cpu_count()
         elif interface is None:
+            self._PoolExecutor = None
             if n_individuals > 1 or (max_workers is not None and max_workers > 1):
                 print(
                     "Parallelization not possible with interface=None. "
                     +"Reducing n_individuals to 1 and ignoring max_workers."
                 )
-                self._PoolExecutor = None
                 max_workers = None
                 n_individuals = 1
 

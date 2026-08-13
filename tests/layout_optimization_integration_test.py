@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from shapely.geometry import Point, Polygon
 
 from floris import (
     FlorisModel,
@@ -17,6 +18,7 @@ from floris.optimization.layout_optimization.layout_optimization_gridded import 
 )
 from floris.optimization.layout_optimization.layout_optimization_random_search import (
     LayoutOptimizationRandomSearch,
+    test_point_in_bounds as point_in_bounds,
 )
 from floris.optimization.layout_optimization.layout_optimization_scipy import (
     LayoutOptimizationScipy,
@@ -28,6 +30,11 @@ TEST_DATA = Path(__file__).resolve().parent / "data"
 YAML_INPUT = TEST_DATA / "input_full.yaml"
 
 test_boundaries = [(0.0, 0.0), (0.0, 1000.0), (1000.0, 1000.0), (1000.0, 0.0), (0.0, 0.0)]
+
+site_polygon = Polygon(
+    shell=[(0.0, 0.0), (0.0, 1000.0), (1000.0, 1000.0), (1000.0, 0.0)],
+    holes=[[(400.0, 400.0), (400.0, 600.0), (600.0, 600.0), (600.0, 400.0)]],
+)
 
 
 def test_base_class(caplog):
@@ -287,3 +294,104 @@ def test_LayoutOptimizationGridded_hexagonal():
 
     # Check that the hexagonal layout is better
     assert n_turbs_opt_hex >= n_turbs_opt_square
+
+
+def test_layout_optimization_gridded_polygon_hole():
+    fmodel = FlorisModel(configuration=YAML_INPUT)
+    layout_opt = LayoutOptimizationGridded(
+        fmodel=fmodel,
+        boundaries=[site_polygon],
+        min_dist=200,
+        rotation_step=90,
+        rotation_range=(0, 90),
+        translation_step=100,
+        hexagonal_packing=False,
+    )
+
+    _, x_opt, y_opt = layout_opt.optimize()
+
+    assert len(x_opt) > 0
+    assert all(site_polygon.contains(Point(x, y)) for x, y in zip(x_opt, y_opt))
+    assert not layout_opt._boundary_polygon.contains(Point(500.0, 500.0))
+    assert not point_in_bounds(500.0, 500.0, layout_opt._boundary_polygon)
+
+
+def test_layout_optimization_polygon_union_and_validation():
+    fmodel = FlorisModel(configuration=YAML_INPUT)
+    overlapping = [
+        Polygon([(0, 0), (0, 100), (100, 100), (100, 0)]),
+        Polygon([(50, 0), (50, 100), (150, 100), (150, 0)]),
+    ]
+    disjoint = [
+        Polygon([(0, 0), (0, 100), (100, 100), (100, 0)]),
+        Polygon([(200, 0), (200, 100), (300, 100), (300, 0)]),
+    ]
+
+    overlapping_opt = LayoutOptimization(fmodel, overlapping, min_dist=5)
+    disjoint_opt = LayoutOptimization(fmodel, disjoint, min_dist=5)
+
+    assert overlapping_opt._boundary_polygon.geom_type == "Polygon"
+    assert disjoint_opt._boundary_polygon.geom_type == "MultiPolygon"
+    assert len(disjoint_opt._boundary_polygon.geoms) == 2
+
+    with pytest.raises(ValueError):
+        LayoutOptimization(fmodel, [], min_dist=5)
+    with pytest.raises(TypeError):
+        LayoutOptimization(fmodel, [overlapping[0], [(0.0, 0.0)]], min_dist=5)
+    with pytest.raises(ValueError):
+        LayoutOptimization(
+            fmodel,
+            [Polygon([(0, 0), (1, 1), (1, 0), (0, 1)])],
+            min_dist=5,
+        )
+
+
+def test_layout_optimization_scipy_polygon_hole_and_disjoint_regions():
+    fmodel = FlorisModel(configuration=YAML_INPUT)
+    fmodel.set(layout_x=[100, 500], layout_y=[100, 500])
+    disjoint_with_hole = [
+        site_polygon,
+        Polygon([(1200, 0), (1200, 100), (1300, 100), (1300, 0)]),
+    ]
+
+    layout_opt = LayoutOptimizationScipy(
+        fmodel=fmodel,
+        boundaries=disjoint_with_hole,
+        min_dist=5,
+        solver=None,
+    )
+
+    hole_and_valid = [
+        layout_opt._norm(100, layout_opt.xmin, layout_opt.xmax),
+        layout_opt._norm(500, layout_opt.xmin, layout_opt.xmax),
+        layout_opt._norm(100, layout_opt.ymin, layout_opt.ymax),
+        layout_opt._norm(500, layout_opt.ymin, layout_opt.ymax),
+    ]
+    boundary_distances = layout_opt._distance_from_boundaries(hole_and_valid)
+    assert boundary_distances[1] < 0
+    assert boundary_distances[0] > 0
+
+
+def test_layout_optimization_random_search_polygon_hole():
+    fmodel = FlorisModel(configuration=YAML_INPUT)
+    fmodel.set(layout_x=[100, 200], layout_y=[100, 100])
+    layout_opt = LayoutOptimizationRandomSearch(
+        fmodel=fmodel,
+        boundaries=[site_polygon],
+        min_dist_D=1,
+        n_individuals=1,
+        seconds_per_iteration=0.01,
+        total_optimization_seconds=0.01,
+        interface=None,
+        relegation_number=0,
+        grid_step_size=200,
+        random_seed=1,
+        use_dist_based_init=True,
+    )
+
+    _, x_opt, y_opt = layout_opt._test_optimize()
+
+    assert all(site_polygon.contains(Point(x, y)) for x, y in zip(x_opt, y_opt))
+    assert point_in_bounds(100.0, 100.0, layout_opt._boundary_polygon)
+    assert not point_in_bounds(500.0, 500.0, layout_opt._boundary_polygon)
+    assert not point_in_bounds(1100.0, 100.0, layout_opt._boundary_polygon)

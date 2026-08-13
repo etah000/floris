@@ -5,7 +5,7 @@ from scipy.optimize import minimize
 from scipy.spatial.distance import cdist
 from shapely.geometry import Point
 
-from .layout_optimization_base import LayoutOptimization, list_depth
+from .layout_optimization_base import LayoutOptimization
 
 
 class LayoutOptimizationScipy(LayoutOptimization):
@@ -28,8 +28,9 @@ class LayoutOptimizationScipy(LayoutOptimization):
         """
         Args:
             fmodel (FlorisModel): A FlorisModel object.
-            boundaries (iterable(float, float)): Pairs of x- and y-coordinates
-                that represent the boundary's vertices (m).
+            boundaries (list): A list of coordinate tuples, a list of lists of
+                coordinate tuples, or a homogeneous list of Shapely Polygons.
+                Polygon holes are excluded and overlapping polygons are unioned.
             bnds (iterable, optional): Bounds for the optimization
                 variables (pairs of min/max values for each variable (m)). If
                 none are specified, they are set to 0 and 1. Defaults to None.
@@ -46,11 +47,6 @@ class LayoutOptimizationScipy(LayoutOptimization):
                 FLORIS model's WindData object. If False, the optimization
                 objective is to maximize AEP. Defaults to False.
         """
-        if list_depth(boundaries) > 1 and hasattr(boundaries[0][0], "__len__"):
-            raise NotImplementedError(
-                "LayoutOptimizationScipy is not configured for multiple regions."
-            )
-
         super().__init__(
             fmodel,
             boundaries,
@@ -59,13 +55,6 @@ class LayoutOptimizationScipy(LayoutOptimization):
             use_value=use_value
         )
 
-        self.boundaries_norm = [
-            [
-                self._norm(val[0], self.xmin, self.xmax),
-                self._norm(val[1], self.ymin, self.ymax),
-            ]
-            for val in self.boundaries
-        ]
         self.x0 = [
             self._norm(x, self.xmin, self.xmax)
             for x in self.fmodel.layout_x
