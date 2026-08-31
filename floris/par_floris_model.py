@@ -325,6 +325,10 @@ class ParFlorisModel(FlorisModel):
                 if "z" in self.core.flow_field.heterogeneous_inflow_config.keys():
                     heterogeneous_inflow_config_subset["z"] = \
                         self.core.flow_field.heterogeneous_inflow_config["z"]
+                if "interp_method" in self.core.flow_field.heterogeneous_inflow_config:
+                    heterogeneous_inflow_config_subset["interp_method"] = (
+                        self.core.flow_field.heterogeneous_inflow_config["interp_method"]
+                    )
                 set_args_subset["heterogeneous_inflow_config"] = heterogeneous_inflow_config_subset
 
             # Handle multidim_conditions

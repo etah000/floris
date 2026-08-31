@@ -262,6 +262,78 @@ def test_wind_data_objects(sample_inputs_fixture):
     assert powers_fmodel_ts.shape == powers_pfmodel_ts.shape
     assert np.allclose(powers_fmodel_ts, powers_pfmodel_ts)
 
+
+def test_preprocessing_preserves_heterogeneous_interp_method(sample_inputs_fixture):
+    sample_inputs_fixture.core["wake"]["model_strings"]["velocity_model"] = VELOCITY_MODEL
+    sample_inputs_fixture.core["wake"]["model_strings"]["deflection_model"] = DEFLECTION_MODEL
+
+    pfmodel = ParFlorisModel(
+        sample_inputs_fixture.core,
+        interface="multiprocessing",
+        max_workers=1,
+        n_wind_condition_splits=2,
+    )
+    time_series = TimeSeries(
+        wind_directions=np.array([270.0, 270.0]),
+        wind_speeds=np.array([10.0, 10.0]),
+        turbulence_intensities=0.06,
+        heterogeneous_inflow_config={
+            "x": np.array([0.0, 500.0]),
+            "y": np.array([0.0, 0.0]),
+            "speed_multipliers": np.array([[0.8, 1.2], [0.9, 1.1]]),
+            "interp_method": "nearest",
+        },
+    )
+    pfmodel.set(wind_data=time_series)
+
+    multiargs = pfmodel._preprocessing()
+
+    assert multiargs
+    for _model_dict, set_args in multiargs:
+        assert set_args["heterogeneous_inflow_config"]["interp_method"] == "nearest"
+
+
+def test_parallel_nearest_heterogeneous_inflow_matches_serial(sample_inputs_fixture):
+    sample_inputs_fixture.core["wake"]["model_strings"]["velocity_model"] = VELOCITY_MODEL
+    sample_inputs_fixture.core["wake"]["model_strings"]["deflection_model"] = DEFLECTION_MODEL
+
+    time_series = TimeSeries(
+        wind_directions=np.array([270.0, 270.0]),
+        wind_speeds=np.array([10.0, 10.0]),
+        turbulence_intensities=0.06,
+        heterogeneous_inflow_config={
+            "x": np.array([0.0, 500.0, 0.0, 500.0]),
+            "y": np.array([0.0, 0.0, 500.0, 500.0]),
+            "speed_multipliers": np.array(
+                [[0.8, 1.2, 0.8, 1.2], [0.9, 1.1, 0.9, 1.1]]
+            ),
+            "interp_method": "nearest",
+        },
+    )
+    fmodel = FlorisModel(sample_inputs_fixture.core)
+    pfmodel = ParFlorisModel(
+        sample_inputs_fixture.core,
+        interface="multiprocessing",
+        max_workers=1,
+        n_wind_condition_splits=2,
+    )
+    for model in (fmodel, pfmodel):
+        model.set(
+            layout_x=[0.0, 500.0],
+            layout_y=[0.0, 0.0],
+            wind_data=time_series,
+        )
+
+    fmodel.run()
+    pfmodel.run()
+
+    np.testing.assert_allclose(
+        pfmodel.get_turbine_powers(),
+        fmodel.get_turbine_powers(),
+        rtol=1e-10,
+        atol=1e-6,
+    )
+
 def test_control_setpoints(sample_inputs_fixture):
     """
     Check that the ParFlorisModel is compatible with control set points.
