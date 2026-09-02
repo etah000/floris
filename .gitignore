@@ -1,4 +1,5 @@
-
+.codegraph
+.history
 # python compiled files
 __pycache__/
 .cache
