@@ -104,7 +104,7 @@ class ParFlorisModel(FlorisModel):
         self.return_turbine_powers_only = return_turbine_powers_only
         self.print_timings = print_timings
 
-    def run(self) -> None:
+    def run(self, progress_callback=None) -> None:
         """
         Run the FLORIS model in parallel.
         """
@@ -119,7 +119,11 @@ class ParFlorisModel(FlorisModel):
             self._stored_turbine_powers = None # Temporary
         if self.interface is None:
             t0 = timerpc()
+            if progress_callback is not None:
+                progress_callback(0, self.core.flow_field.n_findex)
             super().run()
+            if progress_callback is not None:
+                progress_callback(self.core.flow_field.n_findex, self.core.flow_field.n_findex)
             t1 = timerpc()
             self._print_timings(t0, t1, None, None)
         else:
@@ -127,7 +131,24 @@ class ParFlorisModel(FlorisModel):
             self.core.initialize_domain()
             parallel_run_inputs = self._preprocessing()
             t1 = timerpc()
-            if self.interface == "multiprocessing":
+            if progress_callback is not None:
+                total = self.core.flow_field.n_findex
+                progress_callback(0, total)
+                fn = (_parallel_run_powers_only_map if self.return_turbine_powers_only
+                      else _parallel_run_map)
+                if self.interface == "pathos":
+                    results = self.pathos_pool.imap(fn, parallel_run_inputs)
+                    outputs = self._collect_progress(results, parallel_run_inputs, progress_callback, total)
+                else:
+                    with self._PoolExecutor(self.max_workers) as pool:
+                        results = (pool.imap(fn, parallel_run_inputs) if self.interface == "multiprocessing"
+                                   else pool.map(fn, parallel_run_inputs))
+                        outputs = self._collect_progress(results, parallel_run_inputs, progress_callback, total)
+                if self.return_turbine_powers_only:
+                    self._turbine_powers_split = outputs
+                else:
+                    self._fmodels_split = outputs
+            elif self.interface == "multiprocessing":
                 if self.return_turbine_powers_only:
                     with self._PoolExecutor(self.max_workers) as p:
                         self._turbine_powers_split = p.starmap(
@@ -169,6 +190,16 @@ class ParFlorisModel(FlorisModel):
             self.core.state = State.USED
             t3 = timerpc()
             self._print_timings(t0, t1, t2, t3)
+
+    @staticmethod
+    def _collect_progress(results, inputs, callback, total):
+        outputs = []
+        completed = 0
+        for result, (_, conditions) in zip(results, inputs):
+            outputs.append(result)
+            completed += len(conditions["wind_speeds"])
+            callback(completed, total)
+        return outputs
 
     def sample_flow_at_points(self, x: NDArrayFloat, y: NDArrayFloat, z: NDArrayFloat):
         """
